@@ -1,3 +1,4 @@
+from datetime import datetime
 from django.db import models
 from django.db.models import Avg, Sum, Min
 from django.utils import timezone
@@ -6,7 +7,7 @@ from macaddress.fields import MACAddressField
 
 class MetricsQuerySet(models.QuerySet):
     """Custom queryset for metrics models.
-    
+
     Capable of creating new metrics from many aggregated ones.
     """
 
@@ -24,6 +25,18 @@ class MetricsQuerySet(models.QuerySet):
             the 'mac' and 'created' fields, since these won't be aggregated.
         """
         return self.create(**fields, **self.aggregate_fields())
+
+    def get_sum(self, field_name: str) -> int:
+        """Calculate the sum of values for a particular field."""
+        return self.aggregate(Sum(field_name))[f"{field_name}__sum"]
+
+    def get_avg(self, field_name: str) -> float:
+        """Calculate the average of values for a particular field."""
+        return self.aggregate(Avg(field_name))[f"{field_name}__sum"]
+
+    def get_min(self, field_name: str) -> int:
+        """Calculate the minimum of values for a particular field."""
+        return self.aggregate(Min(field_name))[f"{field_name}__sum"]
 
 
 class MetricsManager(models.Manager):
@@ -50,6 +63,22 @@ class Metric(models.Model):
             if prev_index == -1:
                 return None
             return Metric.GRANULARITY_ORDER[prev_index]
+
+        def round_down(self, value: datetime) -> datetime:
+            """Round down to the rearest multiple of this granularity.
+
+            E.g::
+
+              >>> Metric.Granularity.DAILY.round_down("2024-08-22 16:16:00+00:00")
+              2024-08-22 16:00:00+00:00
+            """
+            if self.value == Metric.Granularity.HOURLY:
+                return value.replace(minute=0, second=0)
+            if self.value == Metric.Granularity.DAILY:
+                return value.replace(hour=0, minute=0, second=0)
+            if self.value == Metric.Granularity.MONTHLY:
+                return value.replace(day=1, hour=0, minute=0, second=0)
+            return value
 
     class Meta:
         """Metric metadata."""

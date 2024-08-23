@@ -412,6 +412,10 @@ class Alert(models.Model):
             alert.resolve()
         return result
 
+    def is_resolved(self) -> bool:
+        """Check whether this alert has been resolved."""
+        return self.status == Alert.Status.RESOLVED
+
     def upgrade(self, alert: "Alert", save: bool = True) -> None:
         """Upgrade to a more serious alert"""
         self.level = alert.level

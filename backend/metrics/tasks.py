@@ -54,37 +54,32 @@ def aggregate_metrics(metric_type: Type[Metric], to_gran: Metric.Granularity) ->
     from_gran = to_gran.prev_granularity()
     from_gran_name = from_gran.name if from_gran else "None"
     metrics = metric_type.objects.filter(granularity=from_gran)
-    old_metrics_count = metrics.count()
-    first_metric, last_metric = metrics.last(), metrics.first()
-    # Fewer than one of these metrics
-    if not (first_metric and last_metric):
-        logger.info("No %s metrics to aggregate, skipping", from_gran_name)
-        return
-    min_time = int(last_metric.created.timestamp())
-    # For example, if we're going from HOURLY to DAILY we want to find
-    # all of the hourly metrics from the beginning until one day ago.
-    # The hourly metrics from the last day can remain as hourly metrics.
-    max_time = int((timezone.now() - timedelta(seconds=to_gran.value)).timestamp())
-    new_metrics_count = 0
+    metrics_count = metrics.count()
     # HISTOGRAM
-    # Bucket interval is the dest granularity's total_seconds
-    for t0_int in range(min_time, max_time, to_gran.value):
-        t0 = datetime.fromtimestamp(t0_int, tz=last_metric.created.tzinfo)
-        t1 = t0 + timedelta(seconds=to_gran.value)
-        ta = t0 + (t1 - t0) / 2
-        # These are the old metrics that are going to be aggregated
-        bucket_metrics = metrics.filter(created__gte=t0, created__lt=t1)
-        # Group by mac address
-        unique_mac_addresses = set(bucket_metrics.values_list("mac", flat=True))
-        for mac in unique_mac_addresses:
-            old_metrics = bucket_metrics.filter(mac=mac)
-            old_metrics.create_aggregated(mac=mac, created=ta, granularity=to_gran)
-            old_metrics.delete()
-            new_metrics_count += 1
+    unique_mac_addresses = set(metrics.values_list("mac", flat=True))
+    for mac in unique_mac_addresses:
+        metrics_for_mac = metrics.filter(mac=mac).order_by("created")
+        # Metrics are ordered by their created date in ascending order
+        first_metric, last_metric = metrics_for_mac.first(), metrics_for_mac.last()
+        if not (first_metric and last_metric):
+            continue
+        min_time = int(to_gran.round_down(first_metric.created).timestamp())
+        # This is round up, but I don't feel like writing a separate round_up function
+        max_time = int(to_gran.round_down(last_metric.created).timestamp())+to_gran.value
+        # Bucket interval is the dest granularity's total_seconds
+        for t0_int in range(min_time, max_time, to_gran.value):
+            t0 = datetime.fromtimestamp(t0_int, tz=last_metric.created.tzinfo)
+            t1 = t0 + timedelta(seconds=to_gran.value)
+            ta = t0 + (t1 - t0) / 2
+            # These are the old metrics that are going to be aggregated
+            bucket_metrics = metrics_for_mac.filter(created__gte=t0, created__lt=t1)
+            if bucket_metrics.exists():
+                # Group by mac address
+                bucket_metrics.create_aggregated(mac=mac, created=ta, granularity=to_gran)
+                bucket_metrics.delete()
     logger.info(
-        "Aggregated %d -> %d metrics for %s from %s to %s",
-        old_metrics_count,
-        new_metrics_count,
+        "Aggregated %d metrics for %s from %s to %s",
+        metrics_count,
         metric_type.__name__,
         from_gran_name,
         to_gran.name,
