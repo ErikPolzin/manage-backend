@@ -1,11 +1,10 @@
 from dataclasses import dataclass, asdict
 from typing import TYPE_CHECKING, Any
-from django.conf import settings
 
 if TYPE_CHECKING:
-    from .models import Node
+    from .models import HealthStatusMixin
 else:
-    Node = Any
+    HealthStatusMixin = Any
 
 
 @dataclass
@@ -22,22 +21,22 @@ class CheckResults(list[CheckResult]):
     """A list of device check results."""
 
     @classmethod
-    def run_checks(cls, node: Node) -> "CheckResults":
+    def run_checks(cls, obj: HealthStatusMixin) -> "CheckResults":
         """Run checks for a node and return the results."""
         results = cls()
-        for check in settings.DEVICE_CHECKS:
+        for check in obj.health_checks:
             check_func = check.get("func", bool)
             key = check["key"]
             setting_value = None
             # Metric is an attribute of the node
-            if hasattr(node, key):
-                value = getattr(node, key)
+            if hasattr(obj, key):
+                value = getattr(obj, key)
             else:
                 # Metric is a function on the node
-                get_func = getattr(node, f"get_{check['key']}")
+                get_func = getattr(obj, f"get_{check['key']}")
                 value = get_func()
             if "setting" in check:
-                setting_value = getattr(node.mesh.settings, check["setting"])
+                setting_value = getattr(obj.get_settings(), check["setting"])
                 # Pass the setting value to the check func as well as the metric
                 if value is not None and setting_value is not None:
                     passed = check_func(value, setting_value)

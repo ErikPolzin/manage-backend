@@ -1,11 +1,88 @@
-from django.utils.functional import cached_property
+from datetime import datetime, timedelta
+from functools import cached_property
+
 from django.db import models
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.utils import timezone
 from macaddress.fields import MACAddressField
 
-from metrics.models import ResourcesMetric, RTTMetric, DataRateMetric
+from metrics.models import (
+    ResourcesMetric,
+    RTTMetric,
+    DataRateMetric,
+    DataUsageMetric,
+    Metric,
+)
 from .checks import CheckResults
+
+
+class HealthStatus(models.TextChoices):
+    """Health status choices."""
+
+    UNKNOWN = "unknown", "Unknown"
+    CRITICAL = "critical", "Critical"
+    ERROR = "error", "Error"
+    WARNING = "warning", "Warning"
+    OK = "ok", "Ok"
+
+
+class HealthStatusMixin:
+    """Mixin for models that can run health check on themselves.
+
+    Currently both meshes and nodes can do this.
+    """
+
+    health_checks = []  # Subclasses should override
+    health_status: str  # Subclasses implement as a field
+
+    @cached_property
+    def check_results(self) -> CheckResults:
+        """Get new or cached check results for this node."""
+        return CheckResults.run_checks(self)
+
+    def get_settings(self) -> models.Model:
+        """Get settings for health status checks."""
+        raise NotImplementedError()
+
+    def get_alerts(self) -> models.QuerySet["Alert"]:
+        """Get alerts that apply to this object."""
+        raise NotImplementedError()
+
+    def get_health_status(self) -> HealthStatus:
+        """Convert CheckResults into health status."""
+        # Make sure the health status checks are re-run
+        if hasattr(self, "check_results"):
+            del self.check_results
+        # If no checks have been run, assume status is unknown
+        if self.check_results.num_run == 0:
+            return HealthStatus.UNKNOWN
+        if self.check_results.oll_korrect():
+            return HealthStatus.OK
+        if self.check_results.fewer_than_half_failed():
+            return HealthStatus.WARNING
+        if self.check_results.more_than_half_failed_but_not_all():
+            return HealthStatus.ERROR
+        # All failed
+        return HealthStatus.CRITICAL
+
+    def update_health_status(self, save: bool = True) -> None:
+        """Run health checks and then update this node's health status."""
+        self.health_status = self.get_health_status()
+        if save and isinstance(self, models.Model):
+            self.save(update_fields=["health_status"])
+
+    def generate_alert(self) -> "Alert | None":
+        """Generate an alert for mesh."""
+        alert = Alert.create(self)
+        # No alert was generated for this node, nothing to do
+        if not alert:
+            # Since there is no alert for this node, mark all previous alerts as resolved
+            unresolved_alerts = self.get_alerts().exclude(status=Alert.Status.RESOLVED)
+            for a in unresolved_alerts:
+                a.resolve()
+            return None
+        return alert if alert.apply() else None
 
 
 class WlanConf(models.Model):
@@ -23,7 +100,7 @@ class WlanConf(models.Model):
     is_guest = models.BooleanField(default=False)
 
 
-class Mesh(models.Model):
+class Mesh(HealthStatusMixin, models.Model):
     """Mesh consisting of nodes.
 
     Radiusdesk differentiates between a realm, a mesh and a site
@@ -34,6 +111,8 @@ class Mesh(models.Model):
     class Meta:
         verbose_name_plural = "meshes"
 
+    health_checks = settings.MESH_CHECKS
+
     name = models.CharField(max_length=128, primary_key=True)
     created = models.DateTimeField(auto_now_add=True)
     wlanconfs = models.ManyToManyField(WlanConf, blank=True)
@@ -41,6 +120,46 @@ class Mesh(models.Model):
     lat = models.FloatField(default=0.0)
     lon = models.FloatField(default=0.0)
     maintainers = models.ManyToManyField(User, blank=True)
+    health_status = models.CharField(
+        max_length=16,
+        choices=HealthStatus.choices,
+        default=HealthStatus.UNKNOWN,
+        help_text="The health status of this mesh",
+    )
+
+    def get_settings(self) -> models.Model:
+        return self.settings
+
+    def get_alerts(self) -> models.QuerySet["Alert"]:
+        return Alert.objects.filter(mesh=self, node=None)
+
+    def get_data_usage(self, t0: datetime, t1: datetime) -> int:
+        """Return data usage in a given time range."""
+        mac_addresses = set(self.nodes.values_list("mac", flat=True))
+        data_usage = DataUsageMetric.objects.filter(
+            mac__in=mac_addresses, created__gte=t0, created__lt=t1
+        ).aggregate(
+            rx_bytes__sum=models.Sum("rx_bytes"), tx_bytes__sum=models.Sum("tx_bytes")
+        )
+        txs, rxs = data_usage["tx_bytes__sum"], data_usage["rx_bytes__sum"]
+        # Handles the case where either (or both) are None
+        return (txs or 0) + (rxs or 0)
+
+    def get_daily_data_usage(self, now: datetime | None = None) -> int:
+        """Health check metric that calculates daily data usage (for today)."""
+        if now is None:
+            now = timezone.now()
+        today_start = Metric.Granularity.DAILY.round_down(now)
+        today_end = today_start + timedelta(days=1)
+        return self.get_data_usage(today_start, today_end)
+
+    def get_hourly_data_usage(self, now: datetime | None = None) -> int:
+        """Health check metric that calculates hourly data usage (for this hour)."""
+        if now is None:
+            now = timezone.now()
+        this_hour_start = Metric.Granularity.HOURLY.round_down(now)
+        this_hour_end = this_hour_start + timedelta(hours=1)
+        return self.get_data_usage(this_hour_start, this_hour_end)
 
 
 class MeshSettings(models.Model):
@@ -59,7 +178,7 @@ class MeshSettings(models.Model):
     check_hourly_uptime = models.IntegerField(null=True, blank=True)
 
 
-class Node(models.Model):
+class Node(HealthStatusMixin, models.Model):
     """Database table for network devices.
 
     Nodes can be both APs (Access Points) or Mesh Nodes. Radiusdesk has two
@@ -89,20 +208,15 @@ class Node(models.Model):
         ONLINE = "online", "Online"
         REBOOTING = "rebooting", "Rebooting"
 
-    class HealthStatus(models.TextChoices):
-        """Health status choices."""
-
-        UNKNOWN = "unknown", "Unknown"
-        CRITICAL = "critical", "Critical"
-        WARNING = "warning", "Warning"
-        DECENT = "decent", "Decent"
-        OK = "ok", "Ok"
+    health_checks = settings.DEVICE_CHECKS
 
     # Required Fields
     mac = MACAddressField(primary_key=True, help_text="Physical MAC address")
     name = models.CharField(max_length=255, unique=True, help_text="Unique device name")
     # Optional Fields
-    mesh = models.ForeignKey(Mesh, on_delete=models.CASCADE, null=True, blank=True)
+    mesh = models.ForeignKey(
+        Mesh, on_delete=models.CASCADE, null=True, blank=True, related_name="nodes"
+    )
     adopted_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -142,7 +256,7 @@ class Node(models.Model):
         default=HealthStatus.UNKNOWN,
         help_text=(
             "The health status of this node. "
-            "Even devices that are online way not be functioning correctly"
+            "Even devices that are online may not be functioning correctly"
         ),
     )
     reboot_flag = models.BooleanField(
@@ -180,6 +294,12 @@ class Node(models.Model):
         auto_now_add=True, help_text="The date & time this device was created"
     )
 
+    def get_settings(self) -> models.Model:
+        return self.mesh.settings
+
+    def get_alerts(self):
+        return Alert.objects.filter(mesh=self.mesh, node=self)
+
     @property
     def online(self) -> bool:
         """Check whether this node is online."""
@@ -190,7 +310,7 @@ class Node(models.Model):
         """Set this node's online status."""
         self.status = Node.Status.ONLINE if is_online else Node.Status.OFFLINE
 
-    @cached_property
+    @property
     def last_rate_metric(self) -> DataRateMetric | None:
         """Get the last data rate metric for this node."""
         qs = DataRateMetric.objects.filter(
@@ -198,20 +318,15 @@ class Node(models.Model):
         )
         return qs.order_by("-created").first()
 
-    @cached_property
+    @property
     def last_resource_metric(self) -> ResourcesMetric | None:
         """Get the last resource for this node."""
         return ResourcesMetric.objects.filter(mac=self.mac).order_by("-created").first()
 
-    @cached_property
+    @property
     def last_rtt_metric(self) -> RTTMetric | None:
         """Get the last RTT for this node."""
         return RTTMetric.objects.filter(mac=self.mac).order_by("-created").first()
-
-    @cached_property
-    def check_results(self) -> CheckResults:
-        """Get new or cached check results for this node."""
-        return CheckResults.run_checks(self)
 
     def get_cpu(self) -> bool | None:
         """Get device CPU usage."""
@@ -233,40 +348,6 @@ class Node(models.Model):
         """Get device upload speed."""
         return getattr(self.last_rate_metric, "rx_rate", None)
 
-    def get_health_status(self) -> HealthStatus:
-        """Convert CheckResults into health status."""
-        # If no checks have been run, assume status is unknown
-        if self.check_results.num_run == 0:
-            return Node.HealthStatus.UNKNOWN
-        if self.check_results.oll_korrect():
-            return Node.HealthStatus.OK
-        if self.check_results.fewer_than_half_failed():
-            return Node.HealthStatus.DECENT
-        if self.check_results.more_than_half_failed_but_not_all():
-            return Node.HealthStatus.WARNING
-        # All failed
-        return Node.HealthStatus.CRITICAL
-
-    def update_health_status(self, save: bool = True) -> None:
-        """Run health checks and then update this node's health status."""
-        self.health_status = self.get_health_status()
-        if save:
-            self.save(update_fields=["health_status"])
-
-    def generate_alert(self) -> bool:
-        """Generate an alert for this node, returns False if no alert is generated."""
-        alert = Alert.from_node(self)
-        # No alert was generated for this node, nothing to do
-        if not alert:
-            # Since there is no alert for this node, mark all previous alerts as resolved
-            unresolved_alerts = Alert.objects.filter(node=self).exclude(
-                status=Alert.Status.RESOLVED
-            )
-            for a in unresolved_alerts:
-                a.resolve()
-            return False
-        return alert.generate(node=self)
-
     def __str__(self):
         return f"Node {self.name} ({self.mac})"
 
@@ -281,15 +362,8 @@ class Alert(models.Model):
         ERROR = 2, "Error"
         CRITICAL = 3, "Critical"
 
-    class Type(models.IntegerChoices):
-        """Alert type choices."""
-
-        NODE_STATUS = 1, "Node Status"
-        UPTIME_LOW = 2, "Uptime Low"
-        DATA_USAGE_HIGH = 3, "Data Usage High"
-
     class Status(models.IntegerChoices):
-        """Alert type choices."""
+        """Alert status choices."""
 
         NEW = 1, "New"
         UPGRADED = 2, "Upgraded"
@@ -305,7 +379,6 @@ class Alert(models.Model):
 
     level = models.SmallIntegerField(choices=Level.choices)
     status = models.SmallIntegerField(choices=Status.choices, default=Status.NEW)
-    type = models.SmallIntegerField(choices=Type.choices)
     title = models.CharField(max_length=100)
     text = models.CharField(max_length=255)
     created = models.DateTimeField(auto_now_add=True)
@@ -318,44 +391,51 @@ class Alert(models.Model):
     )
 
     @classmethod
-    def from_node(cls, node: Node) -> "Alert | None":
-        """Generate an alert from a node's status."""
+    def create(cls, obj: HealthStatusMixin) -> "Alert | None":
+        """Generate an alert from a node's or mesh."""
+        if isinstance(obj, Node):
+            node = obj
+            mesh = node.mesh
+        elif isinstance(obj, Mesh):
+            node = None
+            mesh = obj
+        else:
+            node = mesh = None
+        # Make sure we're dealing with the lastest version of the node's health status
+        obj.update_health_status()
         timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
-        if node.status == Node.Status.OFFLINE:
+        if node and node.status == Node.Status.OFFLINE:
             # Level is critical, it should override any health check warnings.
             # Pretty useless to do health checks if the node is offline.
             return Alert(
                 level=Alert.Level.CRITICAL,
-                type=Alert.Type.NODE_STATUS,
                 title=Alert.TITLE_OFFLINE,
                 text=f"_{timestamp}_ {Alert.TEXT_OFFLINE}",
                 node=node,
-                mesh=node.mesh,
+                mesh=mesh,
             )
-        if node.health_status != Node.HealthStatus.OK:
+        if obj.health_status != HealthStatus.OK:
             health_checks_failed = ", ".join(
-                c.key for c in node.check_results if not c.passed
+                c.key for c in obj.check_results if c.passed is False
             )
-            if node.health_status == Node.HealthStatus.CRITICAL:
+            if obj.health_status == HealthStatus.CRITICAL:
                 return cls(
                     level=Alert.Level.CRITICAL,
-                    type=Alert.Type.NODE_STATUS,
                     title=Alert.TITLE_HEALTH_CRITICAL,
                     text=f"_{timestamp}_ {Alert.TEXT_HEALTH_BAD_OR_CRITICAL.format(health_checks_failed)}",
                     node=node,
-                    mesh=node.mesh,
+                    mesh=mesh,
                 )
-            if node.health_status in (
-                Node.HealthStatus.WARNING,
-                Node.HealthStatus.DECENT,
+            if obj.health_status in (
+                HealthStatus.ERROR,
+                HealthStatus.WARNING,
             ):
                 return Alert(
                     level=Alert.Level.ERROR,
-                    type=Alert.Type.NODE_STATUS,
                     title=Alert.TITLE_HEALTH_BAD,
                     text=f"_{timestamp}_ {Alert.TEXT_HEALTH_BAD_OR_CRITICAL.format(health_checks_failed)}",
                     node=node,
-                    mesh=node.mesh,
+                    mesh=mesh,
                 )
         return None
 
@@ -364,8 +444,8 @@ class Alert(models.Model):
         timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
         return f"_{timestamp}_ {text}\n{self.text}"
 
-    def generate(self, node: Node | None = None) -> bool:
-        """Generate this alert if it is worse than previous alerts of the same type.
+    def apply(self) -> bool:
+        """Save this alert if it is worse than previous alerts of the same type.
 
         If it is less severe than previous ones, they will be marked as resolved.
 
@@ -377,11 +457,10 @@ class Alert(models.Model):
 
         :returns: True if the new alert was generated.
         """
-        unresolved_alerts = Alert.objects.filter(type=self.type).exclude(
-            status=Alert.Status.RESOLVED
-        )
-        if node:
-            unresolved_alerts = unresolved_alerts.filter(node=node)
+        obj = self.node if self.node is not None else self.mesh
+        if obj is None:
+            return False
+        unresolved_alerts = obj.get_alerts().exclude(status=Alert.Status.RESOLVED)
         # Only generate a new alert if the current state is worse than
         # that of an alert triggered last (or there are no previous alerts).
         # Otherwise we would be generating new alerts for the same state,

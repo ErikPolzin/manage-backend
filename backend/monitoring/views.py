@@ -2,7 +2,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 
-from .models import Node
+from .models import Node, HealthStatus
 from . import models
 from . import serializers
 
@@ -13,7 +13,7 @@ def overview(request):
         "n_nodes": Node.objects.filter(mesh__isnull=False).count(),
         "n_positioned_nodes": Node.objects.filter(lat__isnull=False, lon__isnull=False).count(),
         "n_unknown_nodes": Node.objects.filter(mesh__isnull=True).count(),
-        "n_ok_nodes": Node.objects.filter(health_status=Node.HealthStatus.OK).count(),
+        "n_ok_nodes": Node.objects.filter(health_status=HealthStatus.OK).count(),
         "n_online_nodes": Node.objects.filter(status=Node.Status.ONLINE).count(),
     })
 

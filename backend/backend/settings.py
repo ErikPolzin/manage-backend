@@ -185,6 +185,33 @@ DEVICE_CHECKS = [
     },
 ]
 
+MESH_CHECKS = [
+    {
+        "title": "Hourly Data Usage",
+        "key": "hourly_data_usage",
+        "setting": "check_hourly_data_usage",
+        "func": lambda v, s: v < s,
+        "feedback": {
+            "NO_DATA": "No hourly data usage recorded",
+            "NO_SETTING": "No hourly data warning set",
+            False: "Hourly data usage is high",
+            True: "Hourly data usage is acceptable",
+        },
+    },
+    {
+        "title": "Daily Data Usage",
+        "key": "daily_data_usage",
+        "setting": "check_daily_data_usage",
+        "func": lambda v, s: v < s,
+        "feedback": {
+            "NO_DATA": "No daily data usage recorded",
+            "NO_SETTING": "No daily data warning set",
+            False: "Daily data usage is high",
+            True: "Daily data usage is acceptable",
+        },
+    },
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
