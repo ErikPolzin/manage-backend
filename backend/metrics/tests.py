@@ -19,12 +19,42 @@ class TestMetricModel(TestCase):
     databases = {"default", "metrics_db"}
 
     def setUp(self):
-        DataUsageMetric.objects.create(mac="ec:27:2f:bf:12:1c", rx_bytes=10, tx_bytes=0, created="2024-08-22 16:16:00+00:00")
-        DataUsageMetric.objects.create(mac="ec:27:2f:bf:12:1c", rx_bytes=10, tx_bytes=10, created="2024-08-22 16:30:00+00:00")
-        DataUsageMetric.objects.create(mac="ec:27:2f:bf:12:1c", rx_bytes=0, tx_bytes=10, created="2024-08-23 16:16:00+00:00")
-        DataUsageMetric.objects.create(mac="ec:27:2f:bf:12:1c", rx_bytes=10, tx_bytes=0, created="2024-09-22 10:00:00+00:00")
-        DataUsageMetric.objects.create(mac="f7:bb:16:fb:26:ac", rx_bytes=0, tx_bytes=10, created="2024-08-22 16:16:00+00:00")
-        DataUsageMetric.objects.create(mac="f7:bb:16:fb:26:ac", rx_bytes=10, tx_bytes=0, created="2024-08-22 17:30:00+00:00")
+        DataUsageMetric.objects.create(
+            mac="ec:27:2f:bf:12:1c",
+            rx_bytes=10,
+            tx_bytes=0,
+            created="2024-08-22 16:16:00+00:00",
+        )
+        DataUsageMetric.objects.create(
+            mac="ec:27:2f:bf:12:1c",
+            rx_bytes=10,
+            tx_bytes=10,
+            created="2024-08-22 16:30:00+00:00",
+        )
+        DataUsageMetric.objects.create(
+            mac="ec:27:2f:bf:12:1c",
+            rx_bytes=0,
+            tx_bytes=10,
+            created="2024-08-23 16:16:00+00:00",
+        )
+        DataUsageMetric.objects.create(
+            mac="ec:27:2f:bf:12:1c",
+            rx_bytes=10,
+            tx_bytes=0,
+            created="2024-09-22 10:00:00+00:00",
+        )
+        DataUsageMetric.objects.create(
+            mac="f7:bb:16:fb:26:ac",
+            rx_bytes=0,
+            tx_bytes=10,
+            created="2024-08-22 16:16:00+00:00",
+        )
+        DataUsageMetric.objects.create(
+            mac="f7:bb:16:fb:26:ac",
+            rx_bytes=10,
+            tx_bytes=0,
+            created="2024-08-22 17:30:00+00:00",
+        )
 
     def reset(self):
         DataUsageMetric.objects.all().delete()
