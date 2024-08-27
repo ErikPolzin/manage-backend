@@ -63,9 +63,12 @@ def aggregate_metrics(metric_type: Type[Metric], to_gran: Metric.Granularity) ->
         first_metric, last_metric = metrics_for_mac.first(), metrics_for_mac.last()
         if not (first_metric and last_metric):
             continue
+        # Min time is always the first (of this granularity) metric's created time,
+        # rounded down to the nearest multiple of the target granularity
         min_time = int(to_gran.round_down(first_metric.created).timestamp())
-        # This is round up, but I don't feel like writing a separate round_up function
-        max_time = int(to_gran.round_down(last_metric.created).timestamp())+to_gran.value
+        # The max time is always the current time rounded down to the nearest
+        # multiple of the target granularity.
+        max_time = int(to_gran.round_down(timezone.now()).timestamp())
         # Bucket interval is the dest granularity's total_seconds
         for t0_int in range(min_time, max_time, to_gran.value):
             t0 = datetime.fromtimestamp(t0_int, tz=last_metric.created.tzinfo)
@@ -75,7 +78,9 @@ def aggregate_metrics(metric_type: Type[Metric], to_gran: Metric.Granularity) ->
             bucket_metrics = metrics_for_mac.filter(created__gte=t0, created__lt=t1)
             if bucket_metrics.exists():
                 # Group by mac address
-                bucket_metrics.create_aggregated(mac=mac, created=ta, granularity=to_gran)
+                bucket_metrics.create_aggregated(
+                    mac=mac, created=ta, granularity=to_gran
+                )
                 bucket_metrics.delete()
     logger.info(
         "Aggregated %d metrics for %s from %s to %s",

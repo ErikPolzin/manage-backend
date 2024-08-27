@@ -46,7 +46,7 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["build"]
-dev = ["pip-tools", "pytest", "pytest-django", "psycopg2", "mysqlclient"]
+dev = ["pip-tools", "pytest", "pytest-django", "psycopg2", "mysqlclient", "mock"]
 
 [project.urls]
 Homepage = "https://github.com/iNethi/manage-backend"

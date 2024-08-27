@@ -1,5 +1,7 @@
 from datetime import datetime
 from django.test import TestCase
+from django.utils import timezone
+from mock import patch
 
 from .models import DataUsageMetric, Metric
 from . import tasks
@@ -61,13 +63,39 @@ class TestMetricModel(TestCase):
         self.setUp()
 
     def test_metrics_aggregation_decreases_count(self):
+        # Test with some date far-ish into the future
+        with patch.object(timezone, 'now', return_value=datetime(2025, 1, 1)):
+            assert DataUsageMetric.objects.count() == 6
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.HOURLY)
+            assert DataUsageMetric.objects.count() == 5
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.DAILY)
+            assert DataUsageMetric.objects.count() == 4
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.MONTHLY)
+            assert DataUsageMetric.objects.count() == 3
+
+    def test_metric_aggregation_ignores_recent_metrics(self):
         assert DataUsageMetric.objects.count() == 6
-        tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.HOURLY)
-        assert DataUsageMetric.objects.count() == 5
-        tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.DAILY)
-        assert DataUsageMetric.objects.count() == 4
-        tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.MONTHLY)
-        assert DataUsageMetric.objects.count() == 3
+        with patch.object(timezone, 'now', return_value=datetime(2024, 8, 22, 16, 50)):
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.HOURLY)
+            # Don't aggregate anything, the hour of 2024/08/22 16:00 is not over yet
+            assert DataUsageMetric.objects.count() == 6
+        with patch.object(timezone, 'now', return_value=datetime(2024, 9, 24, 18)):
+            # Now aggregate all hourly metrics
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.HOURLY)
+            assert DataUsageMetric.objects.count() == 5
+        with patch.object(timezone, 'now', return_value=datetime(2024, 9, 23)):
+            # Do all daily metrics, the metrics I've set up are all either in the
+            # same hour or the same day so daily granularity doesn't ignore much
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.DAILY)
+            assert DataUsageMetric.objects.count() == 4
+        with patch.object(timezone, 'now', return_value=datetime(2024, 8, 25)):
+            # Month of 2024/08 is not over yet, don't aggregate!
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.MONTHLY)
+            assert DataUsageMetric.objects.count() == 4
+        with patch.object(timezone, 'now', return_value=datetime(2024, 10, 1)):
+            tasks.aggregate_metrics(DataUsageMetric, Metric.Granularity.MONTHLY)
+            assert DataUsageMetric.objects.count() == 3
+
 
     def test_metrics_aggregation_doesnt_change_totals(self):
         old_totals = DataUsageMetric.objects.all().get_sum("rx_bytes")

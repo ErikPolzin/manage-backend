@@ -328,15 +328,15 @@ class Node(HealthStatusMixin, models.Model):
         """Get the last RTT for this node."""
         return RTTMetric.objects.filter(mac=self.mac).order_by("-created").first()
 
-    def get_cpu(self) -> bool | None:
+    def get_cpu(self) -> float | None:
         """Get device CPU usage."""
         return getattr(self.last_resource_metric, "cpu", None)
 
-    def get_mem(self) -> bool | None:
+    def get_mem(self) -> float | None:
         """Get device memory usage."""
         return getattr(self.last_resource_metric, "memory", None)
 
-    def get_rtt(self) -> bool | None:
+    def get_rtt(self) -> float | None:
         """Get device RTT time."""
         return getattr(self.last_rtt_metric, "rtt_avg", None)
 
