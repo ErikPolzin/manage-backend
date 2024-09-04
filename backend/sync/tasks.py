@@ -3,10 +3,11 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 import channels.layers
 from django.conf import settings
+from django.db.models import Q
 
 from sync.radiusdesk.sync_db import run as syncrd
 from sync.unifi.sync_db import run as syncunifi
-from monitoring.models import Node
+from monitoring.models import Node, Mesh
 from monitoring.serializers import NodeSerializer
 
 logger = get_task_logger(__name__)
@@ -47,19 +48,23 @@ def sync_device(device_mac: str) -> None:
         return
     serializer = NodeSerializer(device)
     channel_layer = channels.layers.get_channel_layer()
-    async_to_sync(channel_layer.group_send)('updates_group', {
-        "type": "update.device",
-        "data": serializer.data
-    })
+    if device.mesh:
+        async_to_sync(channel_layer.group_send)(device.mesh.name, {
+            "type": "update.device",
+            "data": serializer.data
+        })
 
 
 @shared_task
 def sync_all_devices() -> None:
     """Sync all devices, then send an update via channels."""
     logger.info("Syncing devices")
-    serializer = NodeSerializer(Node.objects.all(), many=True)
-    channel_layer = channels.layers.get_channel_layer()
-    async_to_sync(channel_layer.group_send)('updates_group', {
-        "type": "update.devices",
-        "data": serializer.data
-    })
+    # Send update messages to all meshes
+    for mesh in Mesh.objects.all():
+        nodes = Node.objects.filter(Q(mesh__isnull=True) | Q(mesh__name=mesh.name))
+        serializer = NodeSerializer(nodes, many=True)
+        channel_layer = channels.layers.get_channel_layer()
+        async_to_sync(channel_layer.group_send)(mesh.name, {
+            "type": "update.devices",
+            "data": serializer.data
+        })

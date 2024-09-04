@@ -7,12 +7,13 @@ class UpdatesConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         """Connect a websocket, add to the same updates group."""
-        await self.channel_layer.group_add("updates_group", self.channel_name)
+        self.mesh_name = self.scope["url_route"]["kwargs"]["mesh_name"]
+        await self.channel_layer.group_add(self.mesh_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, code):
         """Leave the updates group on websocket disconnect."""
-        await self.channel_layer.group_discard("updates_group", self.channel_name)
+        await self.channel_layer.group_discard(self.mesh_name, self.channel_name)
 
     async def receive(self, text_data=None, bytes_data=None):
         """Receive data from websocket."""
