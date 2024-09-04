@@ -12,6 +12,7 @@ from metrics.models import (
     RTTMetric,
     DataRateMetric,
     DataUsageMetric,
+    FailuresMetric,
     Metric,
 )
 from .checks import CheckResults
@@ -176,6 +177,7 @@ class MeshSettings(models.Model):
     check_hourly_data_usage = models.FloatField(null=True, blank=True)
     check_daily_uptime = models.IntegerField(null=True, blank=True)
     check_hourly_uptime = models.IntegerField(null=True, blank=True)
+    check_retransmission_rate = models.IntegerField(null=True, blank=True)
 
 
 class Node(HealthStatusMixin, models.Model):
@@ -324,6 +326,11 @@ class Node(HealthStatusMixin, models.Model):
         return ResourcesMetric.objects.filter(mac=self.mac).order_by("-created").first()
 
     @property
+    def last_failure_metric(self) -> ResourcesMetric | None:
+        """Get the last failure metric for this node."""
+        return FailuresMetric.objects.filter(mac=self.mac).order_by("-created").first()
+
+    @property
     def last_rtt_metric(self) -> RTTMetric | None:
         """Get the last RTT for this node."""
         return RTTMetric.objects.filter(mac=self.mac).order_by("-created").first()
@@ -350,6 +357,11 @@ class Node(HealthStatusMixin, models.Model):
 
     def __str__(self):
         return f"Node {self.name} ({self.mac})"
+
+    def get_retransmission_rate(self) -> int | None:
+        """Get device retransmission speed."""
+        f = getattr(self.last_failure_metric, "tx_retries_perc", None)
+        return f() if f else None
 
 
 class Alert(models.Model):

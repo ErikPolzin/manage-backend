@@ -192,5 +192,17 @@ class FailuresMetric(Metric):
     tx_errors = models.IntegerField(null=True, blank=True)
     rx_errors = models.IntegerField(null=True, blank=True)
 
+    def tx_dropped_perc(self) -> int:
+        """Return transmitted packets dropped as a percentage 0-100."""
+        return round(self.tx_dropped/self.tx_packets*100)
+
+    def rx_dropped_perc(self) -> int:
+        """Return received packets dropped as a percentage 0-100."""
+        return round(self.rx_dropped/self.rx_packets*100)
+
+    def tx_retries_perc(self) -> int:
+        """Return re-transmitted packets as a percentage 0-100."""
+        return round(self.tx_retries/self.tx_packets*100)
+
     def __str__(self):
         return f"Metric: Failures [{self.created}]"

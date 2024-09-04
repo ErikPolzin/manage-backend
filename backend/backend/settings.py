@@ -183,6 +183,18 @@ DEVICE_CHECKS = [
             True: "Response time is acceptable",
         },
     },
+    {
+        "title": "Re-transmission Rate",
+        "key": "retransmission_rate",
+        "setting": "check_retransmission_rate",
+        "func": lambda v, s: v < s,
+        "feedback": {
+            "NO_DATA": "No re-transmission data",
+            "NO_SETTING": "No re-tranmission warning set",
+            False: "Too many packets re-transmitted",
+            True: "Transmission rate is good",
+        },
+    },
 ]
 
 MESH_CHECKS = [
