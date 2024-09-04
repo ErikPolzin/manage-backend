@@ -2,43 +2,48 @@ from copy import deepcopy
 import logging
 import json
 
-from django.utils import timezone
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 
 from monitoring.models import Node
-from sync.tasks import sync_device
-from ..utils import get_src_ip
+from sync.tasks import sync_device, sync_all_devices
+from ..utils import get_src_ip, mem_kb_to_bytes
 
 reports_logger = logging.getLogger("reports")
 logger = logging.getLogger(__file__)
 
 
+def parse_report(request: HttpRequest, data: dict) -> Node.Report:
+    """Parse a standardised report from RADIUSdesk inform data."""
+    mem = None
+    if data["report_type"] == "full":
+        mem_data = data["system_info"]["sys"]["memory"]
+        memf = mem_kb_to_bytes(mem_data["free"])
+        memt = mem_kb_to_bytes(mem_data["total"])
+        if memf != -1 and memt != -1 and memt != 0:
+            mem = 100 - round(memf / memt * 100)
+    return Node.Report(
+        ip=get_src_ip(request),
+        is_ap=data["mode"] == "ap",
+        mem=mem
+    )
+
+
 def hook_rd_report_request(request: HttpRequest) -> None:
     """Hook a request coming from a radiusdesk node to the server."""
-    report = json.loads(request.body)
+    report_data = json.loads(request.body)
+    report = parse_report(request, report_data)
     # This little deepcopy bug wasted FOUR AND A HALF HOURS of my life :)
     # DON'T MODIFY DATA THAT'S GOING TO BE FORWARDED!!!!!
-    report_copy = deepcopy(report)
+    report_copy = deepcopy(report_data)
     mac = report_copy.pop("mac")
-    reports_logger.info("%s %s", mac, json.dumps(report_copy))
     node = Node.objects.filter(mac=mac).first()
-    if not node:
-        logger.warning("Received report for an unregistered node.")
-        return
-    # Both light and full reports send mode
-    node.is_ap = report["mode"] == "ap"
-    node.ip = get_src_ip(request) or node.ip
-    node.last_contact = timezone.now()
-    node.status = Node.Status.ONLINE
-    node.update_health_status(save=False)
-    if report["report_type"] == "full":
-        # TODO: Process full report
-        pass
-    node.save(update_fields=["is_ap", "last_contact", "status", "health_status", "ip"])
-    # Generate an optional alert for this node based on the new status
-    node.generate_alert()
-    logger.info("Received report for %s", node.mac)
+    if node:
+        node.on_receive_report(report)
+    else:
+        Node.on_receive_unregistered_report(mac, report)
+    sync_device.delay(mac)
+    reports_logger.info("%s REQUEST %s", mac, json.dumps(report_copy))
     return mac  # We need the mac when we process the response
 
 
@@ -58,9 +63,10 @@ def hook_rd_report_response(response: HttpResponse | StreamingHttpResponse, mac:
                 node.reboot_flag = False
                 node.status = Node.Status.REBOOTING
                 node.save(update_fields=["reboot_flag", "status"])
+                sync_device.delay(str(node.mac))
             response_data["reboot_flag"] = reboot_flag
-        sync_device.delay(str(node.mac))
     content = json.dumps(response_data, cls=DjangoJSONEncoder)
+    reports_logger.info("%s RESPONSE %s", mac, content)
     # Patch the response content
     if isinstance(response, StreamingHttpResponse):
         response.streaming_content = [content]

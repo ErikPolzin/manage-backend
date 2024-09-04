@@ -34,7 +34,7 @@ def generate_alerts(node_mac: str | None = None) -> None:
     """Generate alerts for all nodes."""
     logger.info("Generating alerts")
     node = Node.objects.get(mac=node_mac) if node_mac else None
-    for n in ([node] if node else Node.objects.all()):
+    for n in [node] if node else Node.objects.all():
         n.generate_alert()
 
 
@@ -49,10 +49,15 @@ def sync_device(device_mac: str) -> None:
     serializer = NodeSerializer(device)
     channel_layer = channels.layers.get_channel_layer()
     if device.mesh:
-        async_to_sync(channel_layer.group_send)(device.mesh.name, {
-            "type": "update.device",
-            "data": serializer.data
-        })
+        async_to_sync(channel_layer.group_send)(
+            device.mesh.name, {"type": "update.device", "data": serializer.data}
+        )
+    else:
+        # Broadcast to all meshes
+        for mesh in Mesh.objects.all():
+            async_to_sync(channel_layer.group_send)(
+                mesh.name, {"type": "update.device", "data": serializer.data}
+            )
 
 
 @shared_task
@@ -64,7 +69,6 @@ def sync_all_devices() -> None:
         nodes = Node.objects.filter(Q(mesh__isnull=True) | Q(mesh__name=mesh.name))
         serializer = NodeSerializer(nodes, many=True)
         channel_layer = channels.layers.get_channel_layer()
-        async_to_sync(channel_layer.group_send)(mesh.name, {
-            "type": "update.devices",
-            "data": serializer.data
-        })
+        async_to_sync(channel_layer.group_send)(
+            mesh.name, {"type": "update.devices", "data": serializer.data}
+        )

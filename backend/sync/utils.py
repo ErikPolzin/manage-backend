@@ -55,3 +55,10 @@ def get_src_ip(request: HttpRequest) -> str:
     else:
         ip = request.META.get('REMOTE_ADDR')
     return ip
+
+def mem_kb_to_bytes(mem: str) -> int:
+    """Convert kB memory string to bytes integer."""
+    try:
+        return int(mem.replace(r"\s*(kb|kB)", "")) * 1024
+    except ValueError:
+        return -1

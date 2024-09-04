@@ -1,5 +1,7 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
+import logging
 
 from django.db import models
 from django.conf import settings
@@ -16,6 +18,8 @@ from metrics.models import (
     Metric,
 )
 from .checks import CheckResults
+
+logger = logging.getLogger(__file__)
 
 
 class HealthStatus(models.TextChoices):
@@ -192,6 +196,18 @@ class Node(HealthStatusMixin, models.Model):
     but they aren't network nodes that can route data.
     """
 
+    @dataclass
+    class Report:
+        """A report received from a node.
+        
+        Both RADIUSdesk and UniFi reports need to be converted to this type.
+        """
+
+        ip: str
+        is_ap: bool
+        mem: int | None = None
+        cpu: int | None = None
+
     class Meta:
 
         ordering = ["name"]
@@ -296,6 +312,12 @@ class Node(HealthStatusMixin, models.Model):
         auto_now_add=True, help_text="The date & time this device was created"
     )
 
+    @classmethod
+    def on_receive_unregistered_report(cls, mac: str, report: Report) -> None:
+        """Called when an unregistered report has been received."""
+        # Create a new node
+        cls.objects.create(mac=mac, name=mac, is_ap=report.is_ap, ip=report.ip)
+
     def get_settings(self) -> models.Model | None:
         return self.mesh.settings if self.mesh else None
 
@@ -362,6 +384,21 @@ class Node(HealthStatusMixin, models.Model):
         """Get device retransmission speed."""
         f = getattr(self.last_failure_metric, "tx_retries_perc", None)
         return f() if f else None
+
+    def on_receive_report(self, report: Report) -> None:
+        """Called when an existing node receives a report."""
+        # Log a system resources metric
+        if report.mem is not None:
+            ResourcesMetric.objects.create(mac=self.mac, memory=report.mem, cpu=report.cpu)
+        # Update node attributes
+        self.last_contact = timezone.now()
+        self.status = Node.Status.ONLINE
+        self.is_ap = report.is_ap
+        self.ip = report.ip or self.ip  # Ip may change
+        self.update_health_status(save=False)
+        self.save()
+        self.generate_alert()
+        logger.info("Received report for %s", self.mac)
 
 
 class Alert(models.Model):
