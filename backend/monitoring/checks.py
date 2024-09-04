@@ -36,11 +36,16 @@ class CheckResults(list[CheckResult]):
                 get_func = getattr(obj, f"get_{check['key']}")
                 value = get_func()
             if "setting" in check:
-                setting_value = getattr(obj.get_settings(), check["setting"])
-                # Pass the setting value to the check func as well as the metric
-                if value is not None and setting_value is not None:
-                    passed = check_func(value, setting_value)
-                    feedbackType = passed
+                settings = obj.get_settings()
+                if settings:
+                    setting_value = getattr(settings, check["setting"])
+                    # Pass the setting value to the check func as well as the metric
+                    if value is not None and setting_value is not None:
+                        passed = check_func(value, setting_value)
+                        feedbackType = passed
+                    else:
+                        passed = None
+                        feedbackType = "NO_SETTING"
                 else:
                     passed = None
                     feedbackType = "NO_SETTING"

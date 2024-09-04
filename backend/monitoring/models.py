@@ -42,7 +42,7 @@ class HealthStatusMixin:
         """Get new or cached check results for this node."""
         return CheckResults.run_checks(self)
 
-    def get_settings(self) -> models.Model:
+    def get_settings(self) -> models.Model | None:
         """Get settings for health status checks."""
         raise NotImplementedError()
 
@@ -296,8 +296,8 @@ class Node(HealthStatusMixin, models.Model):
         auto_now_add=True, help_text="The date & time this device was created"
     )
 
-    def get_settings(self) -> models.Model:
-        return self.mesh.settings
+    def get_settings(self) -> models.Model | None:
+        return self.mesh.settings if self.mesh else None
 
     def get_alerts(self):
         return Alert.objects.filter(mesh=self.mesh, node=self)

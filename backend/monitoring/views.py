@@ -1,6 +1,7 @@
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
+from django.db.models import Q
 
 from .models import Node, HealthStatus
 from . import models
@@ -23,6 +24,15 @@ class NodeViewSet(ModelViewSet):
 
     queryset = models.Node.objects.all()
     serializer_class = serializers.NodeSerializer
+
+    def get_queryset(self):
+        """Filter nodes for a given mesh."""
+        qs = super().get_queryset()
+        mesh_name = self.request.query_params.get("mesh")
+        if mesh_name:
+            # Want to include all of the un-adopted nodes
+            qs = qs.filter(Q(mesh__isnull=True) | Q(mesh__name=mesh_name))
+        return qs
 
 
 class AlertsViewSet(ModelViewSet):
