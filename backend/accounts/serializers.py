@@ -48,7 +48,9 @@ class UserSerializer(serializers.ModelSerializer):
 
         model = User
         fields = "__all__"
-        write_only_fields = ("password",)
+        extra_kwargs = {
+            'password': {'write_only': True}
+        }
 
     def create(self, validated_data):
         """Update profile after creating the user."""
