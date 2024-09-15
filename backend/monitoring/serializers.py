@@ -1,4 +1,5 @@
-from rest_framework.serializers import ModelSerializer, SerializerMethodField
+from rest_framework.serializers import ModelSerializer, SerializerMethodField, SlugRelatedField
+from django.contrib.auth.models import User
 from drf_dynamic_fields import DynamicFieldsMixin
 
 from radius.models import Radacct
@@ -31,6 +32,7 @@ class MeshSerializer(ModelSerializer):
 
     settings = MeshSettingsSerializer(required=False)
     wlanconfs = WlanConfSerializer(many=True, required=False)
+    maintainers = SlugRelatedField(many=True, slug_field="username", queryset=User.objects.all())
 
     class Meta:
         """MeshSerializer metadata."""
