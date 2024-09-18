@@ -10,12 +10,17 @@ from . import serializers
 
 @api_view()
 def overview(request):
+    mesh_name = request.query_params.get("mesh")
+    if mesh_name:
+        nodes = Node.objects.filter(mesh__name=mesh_name)
+    else:
+        nodes = Node.objects.all()
     return Response({
-        "n_nodes": Node.objects.filter(mesh__isnull=False).count(),
-        "n_positioned_nodes": Node.objects.filter(lat__isnull=False, lon__isnull=False).count(),
-        "n_unknown_nodes": Node.objects.filter(mesh__isnull=True).count(),
-        "n_ok_nodes": Node.objects.filter(health_status=HealthStatus.OK).count(),
-        "n_online_nodes": Node.objects.filter(status=Node.Status.ONLINE).count(),
+        "n_nodes": nodes.count(),
+        "n_positioned_nodes": nodes.filter(lat__isnull=False, lon__isnull=False).count(),
+        "n_unknown_nodes": nodes.filter(mesh__isnull=True).count(),
+        "n_ok_nodes": nodes.filter(health_status=HealthStatus.OK).count(),
+        "n_online_nodes": nodes.filter(status=Node.Status.ONLINE).count(),
     })
 
 

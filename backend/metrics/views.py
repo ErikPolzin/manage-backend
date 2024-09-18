@@ -1,6 +1,7 @@
 from datetime import datetime
 from rest_framework.viewsets import ModelViewSet
 
+from monitoring.models import Mesh
 from . import models
 from . import serializers
 
@@ -11,6 +12,7 @@ class FilterMixin:
     MAC_FIELD = "mac"
     MIN_TIME_FIELD = "min_time"
     GRANULARITY_FIELD = "granularity"
+    MESH_FIELD = "mesh"
 
     def filter_queryset(self, qs):
         """Filter against a 'min_time' parameter in the request query."""
@@ -18,6 +20,16 @@ class FilterMixin:
         mac = self.request.query_params.get(self.MAC_FIELD)
         min_time = self.request.query_params.get(self.MIN_TIME_FIELD)
         granularity = self.request.query_params.get(self.GRANULARITY_FIELD)
+        mesh_name = self.request.query_params.get(self.MESH_FIELD)
+        # No need to filter nodes in mesh if you're already specifying a node id
+        if mesh_name is not None and mac is None:
+            # Remember meshes are stored in the default database, not the metrics db
+            mesh = Mesh.objects.using("default").filter(name=mesh_name).first()
+            if mesh:
+                # Note the explicit list conversion, otherwise the filtering is
+                # done in the db request which casues issues across the two dbs
+                mac_addresses = list(mesh.nodes.values_list("mac", flat=True))
+                qs = qs.filter(mac__in=mac_addresses)
         if mac is not None:
             qs = qs.filter(mac=mac)
         if min_time is not None:
